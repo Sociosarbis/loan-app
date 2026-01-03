@@ -1,4 +1,4 @@
-import { createAsync, Router, useNavigate } from "@solidjs/router";
+import { Router, useAction, useNavigate } from "@solidjs/router";
 import { FileRoutes } from "@solidjs/start/router";
 import { For, Suspense } from "solid-js";
 import "./app.css";
@@ -7,6 +7,7 @@ import { createUserStore } from "./stores/user";
 import { createToastStore } from "./stores/toast";
 import { createFileStore } from "./stores/file";
 import { Client } from "./utils/onedrive";
+import { saveSession } from "./utils/session";
 
 export default function App() {
   const toastStore = createToastStore();
@@ -28,6 +29,7 @@ export default function App() {
                     refreshToken: () => userStore.state.refreshToken,
                     onRefresh: (tokens) => {
                       userStore.setTokens(tokens);
+                      saveSession(tokens);
                     },
                   },
                   () => {

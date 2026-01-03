@@ -131,6 +131,37 @@ function calculateRepaymentPlan(
   };
 }
 
+function SyncStatus(props: { loanData?: LoanData; loading?: boolean }) {
+  const lastModified = () => props.loanData?.lastModifiedAt || 0;
+  const lastSynced = () => props.loanData?.lastSyncedAt || 0;
+  return (
+    <Show
+      when={props.loanData}
+      fallback={
+        <span class="text-gray-500">
+          <Show
+            when={props.loading}
+            fallback={
+              <>
+                <div class="status mr-1"></div>无数据
+              </>
+            }
+          >
+            <span class="loading loading-spinner mr-2"></span>等待同步...
+          </Show>
+        </span>
+      }
+    >
+      <Show
+        when={lastModified() <= lastSynced()}
+        fallback={<span class="text-amber-600">🔄 有本地改动，等待同步…</span>}
+      >
+        <span class="text-green-600">✅ 已同步（云端最新）</span>;
+      </Show>
+    </Show>
+  );
+}
+
 function Home() {
   const { userStore, toastStore, oneDriveClient } = useContext(AppContext);
   const [searchParams] = useSearchParams();
@@ -167,36 +198,6 @@ function Home() {
   const showMessage = (text: string, isError = false) => {
     toastStore.showMessage({ text, type: isError ? "error" : "info" });
   };
-
-  const syncStatus = createMemo(() => {
-    if (!loanData()) {
-      return (
-        <span class="text-gray-500">
-          <Show
-            when={loading()}
-            fallback={
-              <>
-                <div class="status mr-1"></div>无数据
-              </>
-            }
-          >
-            <span class="loading loading-spinner mr-2"></span>等待同步...
-          </Show>
-        </span>
-      );
-    }
-
-    const lastModified = loanData()?.lastModifiedAt || 0;
-    const lastSynced = loanData()?.lastSyncedAt || 0;
-
-    if (lastModified <= lastSynced) {
-      // 本地未改动，或刚从云端加载
-      return <span class="text-green-600">✅ 已同步（云端最新）</span>;
-    } else {
-      // 本地有新改动
-      return <span class="text-amber-600">🔄 有本地改动，等待同步…</span>;
-    }
-  });
 
   const downloadFromOnedrive = async () => {
     try {
@@ -367,7 +368,9 @@ function Home() {
             <div id="syncSection" class="card shadow-sm bg-base-100">
               <div class="card-body">
                 <h2 class="card-title">OneDrive 云端同步</h2>
-                <div id="syncStatus">{syncStatus()}</div>
+                <div id="syncStatus">
+                  <SyncStatus loanData={loanData()} loading={loading()} />
+                </div>
               </div>
             </div>
           </Show>
@@ -385,6 +388,7 @@ function Home() {
                     disabled={!isCreate()}
                     onChange={(e) => {
                       setPrincipal(e.target.value);
+                      setLoanData();
                     }}
                     value={getPrincipal()}
                     class="w-full input"
@@ -401,6 +405,7 @@ function Home() {
                     value={getPeriods()}
                     onChange={(e) => {
                       setPeriods(e.target.value);
+                      setLoanData();
                     }}
                     class="w-full input"
                   />
@@ -417,6 +422,7 @@ function Home() {
                     value={getRate()}
                     onChange={(e) => {
                       setRate(e.target.value);
+                      setLoanData();
                     }}
                     class="w-full input"
                   />
@@ -431,6 +437,7 @@ function Home() {
                     disabled={!isCreate()}
                     onChange={(e) => {
                       setRepaymentType(e.target.value);
+                      setLoanData();
                     }}
                   >
                     <option value={RepaymentType.EQUAL_PRINCIPAL_INTEREST}>
@@ -443,72 +450,86 @@ function Home() {
                 </div>
               </div>
               <Show when={isCreate()}>
-                <div class="mt-4">
+                <div class="mt-4 card-actions">
                   <button
                     id="calculateBtn"
                     onClick={() => {
-                      setModal({
-                        visible: true,
-                        title: "创建还款计划",
-                        content: `确定创建${fileName}？`,
-                        loading: false,
-                        onOk: () => {
-                          const principal = parseFloat(getPrincipal());
-                          const periods = parseInt(getPeriods());
-                          const rate = parseFloat(getRate());
-                          const repaymentType = getRepaymentType();
+                      const principal = parseFloat(getPrincipal());
+                      const periods = parseInt(getPeriods());
+                      const rate = parseFloat(getRate());
+                      const repaymentType = getRepaymentType();
 
-                          const data = calculateRepaymentPlan(
-                            principal,
-                            periods,
-                            rate,
-                            repaymentType
-                          );
-                          if (data) {
-                            data.lastModifiedAt = Date.now();
-                            data.lastSyncedAt = 0; // 尚未同步
-                            setModal((prev) => {
-                              return {
-                                ...prev,
-                                loading: true,
-                              };
-                            });
-                            uploadToOnedrive(data).then(
-                              () => {
-                                setModal((prev) => {
-                                  return {
-                                    ...prev,
-                                    loading: false,
-                                    visible: false,
-                                  };
-                                });
-                                navigate(
-                                  `/?${new URLSearchParams({
-                                    file_name: fileName,
-                                    folder_id: folderId(),
-                                  })}`,
-                                  { replace: true }
-                                );
-                              },
-                              () => {
-                                setModal((prev) => {
-                                  return {
-                                    ...prev,
-                                    loading: false,
-                                  };
-                                });
-                              }
-                            );
-                          } else {
-                            alert("请填写完整且有效的贷款信息");
-                          }
-                        },
-                      });
+                      const data = calculateRepaymentPlan(
+                        principal,
+                        periods,
+                        rate,
+                        repaymentType
+                      );
+                      if (data) {
+                        data.lastModifiedAt = Date.now();
+                        data.lastSyncedAt = 0; // 尚未同步
+                        setLoanData(data);
+                      } else {
+                        alert("请填写完整且有效的贷款信息");
+                      }
                     }}
                     class="btn btn-primary"
                   >
                     计算还款计划
                   </button>
+                  <Show when={loanData()}>
+                    {(data) => {
+                      return (
+                        <button
+                          class="btn btn-success"
+                          onClick={() => {
+                            setModal({
+                              visible: true,
+                              title: "创建还款计划",
+                              content: `确定创建${fileName}？`,
+                              loading: false,
+                              onOk: () => {
+                                setModal((prev) => {
+                                  return {
+                                    ...prev,
+                                    loading: true,
+                                  };
+                                });
+                                uploadToOnedrive(data()).then(
+                                  () => {
+                                    setModal((prev) => {
+                                      return {
+                                        ...prev,
+                                        loading: false,
+                                        visible: false,
+                                      };
+                                    });
+                                    navigate(
+                                      `/?${new URLSearchParams({
+                                        file_name: fileName,
+                                        folder_id: folderId(),
+                                      })}`,
+                                      { replace: true }
+                                    );
+                                  },
+                                  () => {
+                                    setModal((prev) => {
+                                      return {
+                                        ...prev,
+                                        loading: false,
+                                      };
+                                    });
+                                  }
+                                );
+                              },
+                            });
+                          }}
+                        >
+                          保存计划
+                        </button>
+                      );
+                    }}
+                  </Show>
                 </div>
               </Show>
             </div>

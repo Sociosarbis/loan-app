@@ -1,10 +1,6 @@
 import { useSession } from "vinxi/http";
 import { Tokens } from "~/types/Tokens";
-
-const config = {
-  password: process.env.SESSION_PASSWORD,
-  name: "user",
-};
+import { config } from "~/utils/session";
 
 export function useUserSession() {
   "user server";

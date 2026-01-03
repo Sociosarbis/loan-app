@@ -17,16 +17,24 @@ export function Modal(props: {
     }
   });
   return (
-    <dialog ref={modelRef} class="modal" onClick={props.onCancel}>
+    <dialog
+      ref={modelRef}
+      class="modal"
+      onClick={props.loading ? undefined : props.onCancel}
+    >
       {/* 弹窗内容：阻止冒泡，避免点击内容时关闭 */}
       <div class="modal-box" onClick={(e) => e.stopPropagation()}>
         <h2 class="text-lg font-bold">{props.title}</h2>
         <p class="py-4">{props.content}</p>
         <div class="modal-action">
-          <button onClick={props.onCancel} class="btn">
+          <button onClick={props.onCancel} disabled={props.loading} class="btn">
             取消
           </button>
-          <button onClick={props.onOk} class="btn btn-primary">
+          <button
+            onClick={props.onOk}
+            class="btn btn-primary"
+            disabled={props.loading}
+          >
             <Show when={props.loading}>
               <span class="loading loading-spinner mx-1"></span>
             </Show>

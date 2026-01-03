@@ -3,6 +3,7 @@ import { useNavigate } from "@solidjs/router";
 import { createSignal, For, onMount, Show, useContext } from "solid-js";
 import { AppContext } from "~/stores";
 import { NeedLoggedIn } from "~/stores/user";
+import { clearSession } from "~/utils/session";
 
 const PAGE_SIZE = 20;
 
@@ -100,6 +101,7 @@ function FileListPage() {
             class="btn btn-ghost btn-sm"
             onClick={() => {
               userStore.setTokens({});
+              clearSession();
             }}
           >
             退出

@@ -8,6 +8,7 @@ import {
   generateCodeVerifier,
 } from "~/utils/onedrive";
 import { useNavigate } from "@solidjs/router";
+import { saveSession } from "~/utils/session";
 
 export default function LoginPage() {
   const [isLoading, setLoading] = createSignal(false);
@@ -47,10 +48,12 @@ export default function LoginPage() {
       try {
         const tokenData = await exchangeCodeForTokens(code);
         if (tokenData?.access_token) {
-          userStore.setTokens({
+          const tokens = {
             accessToken: tokenData.access_token,
             refreshToken: tokenData.refresh_token,
-          });
+          };
+          await saveSession(tokens);
+          userStore.setTokens(tokens);
           // 清除 URL 参数
           window.history.replaceState(
             {},
