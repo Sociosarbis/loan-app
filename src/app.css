@@ -1,0 +1,23 @@
+@import "tailwindcss";
+@plugin "daisyui";
+
+:root {
+  --background-rgb: #d1d5db;
+  --foreground-rgb: 0, 0, 0;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background-rgb: 0, 0, 0;
+    --foreground-rgb: 255, 255, 255;
+  }
+}
+
+body {
+  background: rgb(var(--background-rgb));
+  color: rgb(var(--foreground-rgb));
+  font-family: /* Windows */ "Microsoft YaHei", "微软雅黑",
+    /* macOS / iOS */ "PingFang SC", "Hiragino Sans GB", "Heiti SC",
+    /* Android */ "Roboto", "Noto Sans CJK SC", "Droid Sans Fallback",
+    /* Linux */ "WenQuanYi Micro Hei", "文泉驿微米黑", /* 通用回退 */ sans-serif;
+}
