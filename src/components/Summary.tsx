@@ -19,7 +19,7 @@ export function Summary(props: { loanData?: LoanData }) {
             : 0;
         return (
           <div id="summary" class="mb-4 p-4 bg-blue-50 rounded-lg">
-            <div class="stats">
+            <div class="stats w-full">
               <div class="stat">
                 <p class="stat-title">当前期数</p>
                 <p class="stat-value">{current()}</p>
