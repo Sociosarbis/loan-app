@@ -9,7 +9,7 @@ export function generateCodeVerifier() {
   const array = new Uint8Array(32);
   crypto.getRandomValues(array);
   return Array.from(array, (dec) => ("0" + dec.toString(16)).slice(-2)).join(
-    ""
+    "",
   );
 }
 
@@ -22,7 +22,7 @@ export async function generateCodeChallenge(verifier: string) {
 }
 
 export async function exchangeCodeForTokens(
-  code: string
+  code: string,
 ): Promise<{ access_token: string; refresh_token: string } | undefined> {
   const codeVerifier = sessionStorage.getItem("pkce_code_verifier");
   if (!codeVerifier) {
@@ -64,10 +64,10 @@ const noRefreshTokenErr = new Error("no refresh token");
 export class Client {
   constructor(
     private tokensProvider: TokensProvider,
-    private onAuthFailed: () => void = () => {}
+    private onAuthFailed: () => void = () => {},
   ) {}
   async fetchPage(
-    url: string
+    url: string,
   ): Promise<{ items: OneDriveFile[]; nextLink?: string }> {
     const token = this.tokensProvider.accessToken();
     if (!token) {
@@ -93,7 +93,7 @@ export class Client {
       throw noAccessTokenErr;
     }
     const rootRes = await this.fetch(
-      "https://graph.microsoft.com/v1.0/me/drive/root/children"
+      "https://graph.microsoft.com/v1.0/me/drive/root/children",
     );
     if (!rootRes.ok) throw new Error("无法访问 OneDrive 根目录");
     return await rootRes.json();
@@ -116,7 +116,7 @@ export class Client {
           folder: {},
           "@microsoft.graph.conflictBehavior": "fail",
         }),
-      }
+      },
     );
     if (!createRes.ok) {
       const err = await createRes.json();
@@ -155,6 +155,7 @@ export class Client {
       if (data.access_token) {
         return data;
       }
+      this.onAuthFailed();
       throw new Error("刷新令牌失败");
     } catch (err) {
       throw err;
@@ -169,7 +170,7 @@ export class Client {
     file_name: string;
   }) {
     return this.fetch(
-      `${ONEDRIVE_CONFIG.apiUrl}/me/drive/items/${folder_id}:/${file_name}`
+      `${ONEDRIVE_CONFIG.apiUrl}/me/drive/items/${folder_id}:/${file_name}`,
     );
   }
 
@@ -188,7 +189,7 @@ export class Client {
         method: "PUT",
         body: JSON.stringify(content),
         headers: { "Content-Type": "application/json" },
-      }
+      },
     );
   }
 

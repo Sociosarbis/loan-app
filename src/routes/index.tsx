@@ -25,7 +25,7 @@ function calculateRepaymentPlan(
   principal: number,
   periods: number,
   rate: number,
-  repaymentType: string
+  repaymentType: string,
 ): LoanData | null {
   if (!principal || !periods || !rate || periods <= 0) return null;
 
@@ -62,7 +62,7 @@ function calculateRepaymentPlan(
         plan[plan.length - 1].principal += remaining;
         plan[plan.length - 1].remaining = 0;
         plan[plan.length - 1].payment = Math.round(
-          plan[plan.length - 1].principal + plan[plan.length - 1].interest
+          plan[plan.length - 1].principal + plan[plan.length - 1].interest,
         );
         break;
       }
@@ -97,7 +97,7 @@ function calculateRepaymentPlan(
         principal: principalPart,
         interest: parseFloat(adjustedInterest.toFixed(2)),
         remaining: parseFloat(
-          Math.max(0, remainingBefore - principalPart).toFixed(2)
+          Math.max(0, remainingBefore - principalPart).toFixed(2),
         ),
       });
     }
@@ -171,8 +171,9 @@ function Home() {
   const [getPeriods, setPeriods] = createSignal<string>("12");
   const [getRate, setRate] = createSignal<string>("5.5");
   const navigate = useNavigate();
-  const [getRepaymentType, setRepaymentType] =
-    createSignal<string>("repaymentType");
+  const [getRepaymentType, setRepaymentType] = createSignal<string>(
+    RepaymentType.EQUAL_PRINCIPAL_INTEREST,
+  );
   const isLoggedIn = () => !!userStore.state.accessToken;
   const isCreate = () =>
     !(
@@ -279,7 +280,7 @@ function Home() {
     setPeriods(data.periods.toString());
     setRate(data.annualRate.toString());
     setRepaymentType(
-      data.repaymentType || RepaymentType.EQUAL_PRINCIPAL_INTEREST
+      data.repaymentType || RepaymentType.EQUAL_PRINCIPAL_INTEREST,
     );
   }
 
@@ -434,6 +435,7 @@ function Home() {
                   <select
                     id="repaymentType"
                     class="w-full select"
+                    value={getRepaymentType()}
                     disabled={!isCreate()}
                     onChange={(e) => {
                       setRepaymentType(e.target.value);
@@ -463,7 +465,7 @@ function Home() {
                         principal,
                         periods,
                         rate,
-                        repaymentType
+                        repaymentType,
                       );
                       if (data) {
                         data.lastModifiedAt = Date.now();
@@ -509,7 +511,7 @@ function Home() {
                                         file_name: fileName,
                                         folder_id: folderId(),
                                       })}`,
-                                      { replace: true }
+                                      { replace: true },
                                     );
                                   },
                                   () => {
@@ -519,7 +521,7 @@ function Home() {
                                         loading: false,
                                       };
                                     });
-                                  }
+                                  },
                                 );
                               },
                             });
@@ -553,7 +555,7 @@ function Home() {
                         loanData(),
                         (loanData) =>
                           loanData &&
-                          loanData.currentPeriod >= loanData.plan.length
+                          loanData.currentPeriod >= loanData.plan.length,
                       )}
                       onClick={makePayment}
                       class="btn btn-primary"
@@ -564,7 +566,7 @@ function Home() {
                       id="undoBtn"
                       disabled={thru(
                         loanData(),
-                        (loanData) => !loanData?.paymentHistory.length
+                        (loanData) => !loanData?.paymentHistory.length,
                       )}
                       onClick={undoPayment}
                       class="btn btn-warning"
