@@ -1,25 +1,25 @@
 import {
+  children,
   createEffect,
   createMemo,
   createSignal,
-  JSXElement,
   onCleanup,
-  onMount,
   Show,
+  Suspense,
   useContext,
 } from "solid-js";
 import { History } from "~/components/History";
 import { PlanTable } from "~/components/PlanTable";
-import { ONEDRIVE_CONFIG } from "~/config";
 import { RepaymentType } from "~/consts";
 import { LoanData } from "~/types/LoanData";
-import { isString, thru } from "lodash-es";
+import { isString, pick, thru } from "lodash-es";
 import { Summary } from "~/components/Summary";
 import { Modal } from "~/components/Modal";
 import { AppContext } from "~/stores";
-import { useNavigate, useSearchParams } from "@solidjs/router";
+import { createAsync, useNavigate, useSearchParams } from "@solidjs/router";
 import dayjs from "dayjs";
 import { NeedLoggedIn } from "~/stores/user";
+import { Input } from "~/components/Input";
 
 function calculateRepaymentPlan(
   principal: number,
@@ -136,7 +136,7 @@ function SyncStatus(props: { loanData?: LoanData; loading?: boolean }) {
   const lastSynced = () => props.loanData?.lastSyncedAt || 0;
   return (
     <Show
-      when={props.loanData}
+      when={props.loanData && !props.loading}
       fallback={
         <span class="text-gray-500">
           <Show
@@ -164,35 +164,51 @@ function SyncStatus(props: { loanData?: LoanData; loading?: boolean }) {
 
 function Home() {
   const { userStore, toastStore, oneDriveClient } = useContext(AppContext);
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [loading, setLoading] = createSignal(false);
   const [loanData, setLoanData] = createSignal<LoanData>();
+  const [editing, setEditing] = createSignal<boolean>();
+  const [prevLoanData, setPrevLoanData] = createSignal<LoanData>();
   const [getPrincipal, setPrincipal] = createSignal<string>("10000");
   const [getPeriods, setPeriods] = createSignal<string>("12");
   const [getRate, setRate] = createSignal<string>("5.5");
+  const [autoSync, setAutoSync] = createSignal<boolean>(true);
   const navigate = useNavigate();
+  const [editFileName, setEditFileName] = createSignal<string>("");
   const [getRepaymentType, setRepaymentType] = createSignal<string>(
     RepaymentType.EQUAL_PRINCIPAL_INTEREST,
   );
   const isLoggedIn = () => !!userStore.state.accessToken;
   const isCreate = () =>
     !(
-      isString(searchParams.file_name) &&
-      searchParams.file_name &&
+      isString(searchParams.file_id) &&
+      searchParams.file_id &&
       isString(searchParams.folder_id) &&
       searchParams.folder_id
     );
   const folderId = () => searchParams.folder_id?.toString() ?? "";
+  const fileId = () => searchParams.file_id?.toString() ?? "";
+  const prevFileId = createMemo(() => loanData()?.prev_file_id);
+  const prevFileMeta = createAsync(async () => {
+    const id = prevFileId();
+    return id
+      ? oneDriveClient.fetchFileMeta({ file_id: id }).then((res) => {
+          return res.ok
+            ? res.json().then((json) => pick(json, "id", "name"))
+            : undefined;
+        })
+      : undefined;
+  });
   const [modal, setModal] = createSignal({
     visible: false,
     title: "",
-    content: "",
     loading: false,
     onOk: () => {},
   });
-  const fileName = isCreate()
-    ? `loan_calculator_data_${dayjs().format("YYYYMMDDHHmmss")}.json`
-    : searchParams.file_name!.toString();
+  const fileName = createMemo(() => {
+    isCreate() || editing();
+    return `loan_calculator_data_${dayjs().format("YYYYMMDDHHmmss")}.json`;
+  });
 
   let timerId: number | undefined;
 
@@ -203,8 +219,7 @@ function Home() {
   const downloadFromOnedrive = async () => {
     try {
       const metaRes = await oneDriveClient.fetchFileMeta({
-        folder_id: folderId(),
-        file_name: fileName,
+        file_id: fileId(),
       });
       if (!metaRes) return null;
 
@@ -235,10 +250,10 @@ function Home() {
     const data = loanData();
 
     // 自动同步（防抖）
-    if (isLoggedIn() && data) {
+    if (isLoggedIn() && !isCreate() && !editing() && data && autoSync()) {
       clearTimeout(autoSyncTimer);
       autoSyncTimer = window.setTimeout(() => {
-        uploadToOnedrive(data);
+        uploadToOnedrive(data, { file_id: fileId() });
       }, 3000);
     }
   };
@@ -274,7 +289,7 @@ function Home() {
     updateUI(); // 内部会调用 updateSyncStatus()
   };
 
-  function syncFormFromData(data: LoanData) {
+  function syncFormFromData(data?: LoanData) {
     if (!data) return;
     setPrincipal(data.principal.toString());
     setPeriods(data.periods.toString());
@@ -284,13 +299,21 @@ function Home() {
     );
   }
 
-  const uploadToOnedrive = async (data: LoanData) => {
+  const uploadToOnedrive = async (
+    data: LoanData,
+    options?: { file_id?: string; file_name?: string },
+  ) => {
     try {
       const now = Date.now(); // ←←← 关键：标记已同步
       const res = await oneDriveClient.putFile({
-        content: { ...data, lastSyncedAt: now },
+        content: {
+          prev_file_id: options?.file_name ? fileId() : undefined,
+          ...data,
+          lastSyncedAt: now,
+        },
+        file_id: options?.file_id,
         folder_id: folderId(),
-        file_name: fileName,
+        file_name: options?.file_name,
       });
       if (res && res.ok) {
         setLoanData((prev) => {
@@ -302,19 +325,19 @@ function Home() {
             lastSyncedAt: now,
           };
         });
-        return true;
+        return res.json();
       } else {
         showMessage("❌ 上传失败", true);
-        return false;
+        throw new Error("上传失败");
       }
     } catch (err) {
       showMessage("❌ 上传异常", true);
-      return false;
+      throw new Error("上传异常");
     }
   };
 
   createEffect(async () => {
-    if (!isCreate()) {
+    if (!isCreate() && fileId()) {
       if (isLoggedIn()) {
         // 优先从云端加载
         setLoading(true);
@@ -361,14 +384,129 @@ function Home() {
             />
           </svg>
         </button>
-        <h1 class="text-xl font-bold text-gray-800">贷款复利计算器</h1>
+        <h1 class="text-xl font-bold text-gray-800 overflow-hidden text-ellipsis">
+          {searchParams.file_name || "贷款复利计算器"}
+        </h1>
+        <Show when={!isCreate() && !editing()}>
+          <button
+            class="btn btn-ghost btn-square"
+            onClick={() => {
+              setEditFileName(fileName());
+              setModal({
+                visible: true,
+                title: "修改文件名",
+                loading: false,
+                onOk: () => {
+                  if (!editFileName()) {
+                    return;
+                  }
+                  setModal((prev) => {
+                    return {
+                      ...prev,
+                      loading: true,
+                    };
+                  });
+                  oneDriveClient
+                    .renameFile({
+                      file_id: fileId(),
+                      file_name: editFileName(),
+                    })
+                    .then(
+                      (res) => {
+                        setModal((prev) => {
+                          return {
+                            ...prev,
+                            loading: false,
+                            visible: false,
+                          };
+                        });
+                        setSearchParams(
+                          {
+                            file_name: editFileName(),
+                          },
+                          { replace: true },
+                        );
+                      },
+                      () => {
+                        setModal((prev) => {
+                          return {
+                            ...prev,
+                            loading: false,
+                          };
+                        });
+                      },
+                    );
+                },
+              });
+            }}
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+            </svg>
+          </button>
+        </Show>
       </div>
       <div class="container mx-auto pt-8">
         <div class="flex flex-col gap-y-4">
-          <Show when={!isCreate()}>
+          <Show when={!isCreate() && !editing()}>
             <div id="syncSection" class="card shadow-sm bg-base-100">
               <div class="card-body">
-                <h2 class="card-title">OneDrive 云端同步</h2>
+                <h2 class="card-title">
+                  OneDrive 云端同步
+                  <input
+                    type="checkbox"
+                    checked={autoSync()}
+                    class="toggle"
+                    onChange={(e) => {
+                      setAutoSync(e.target.checked);
+                    }}
+                  ></input>
+                </h2>
+                <Show when={loanData()?.prev_file_id}>
+                  {(file_id) => {
+                    return (
+                      <div>
+                        <Suspense
+                          fallback={
+                            <button class="btn btn-sm btn-link" disabled>
+                              历史计划
+                              <span class="loading loading-sm loading-spinner mx-1"></span>
+                            </button>
+                          }
+                        >
+                          <div>
+                            <button
+                              class="btn btn-sm btn-link"
+                              disabled={!prevFileMeta()?.name}
+                              onClick={() => {
+                                setSearchParams(
+                                  {
+                                    file_id: file_id(),
+                                    file_name: prevFileMeta()?.name,
+                                  },
+                                  {
+                                    replace: false,
+                                  },
+                                );
+                              }}
+                            >
+                              历史计划
+                            </button>
+                          </div>
+                        </Suspense>
+                      </div>
+                    );
+                  }}
+                </Show>
                 <div id="syncStatus">
                   <SyncStatus loanData={loanData()} loading={loading()} />
                 </div>
@@ -402,7 +540,7 @@ function Home() {
                   <input
                     type="number"
                     id="periods"
-                    disabled={!isCreate()}
+                    disabled={!isCreate() && !editing()}
                     value={getPeriods()}
                     onChange={(e) => {
                       setPeriods(e.target.value);
@@ -419,7 +557,7 @@ function Home() {
                     type="number"
                     id="rate"
                     step="0.01"
-                    disabled={!isCreate()}
+                    disabled={!isCreate() && !editing()}
                     value={getRate()}
                     onChange={(e) => {
                       setRate(e.target.value);
@@ -436,7 +574,7 @@ function Home() {
                     id="repaymentType"
                     class="w-full select"
                     value={getRepaymentType()}
-                    disabled={!isCreate()}
+                    disabled={!isCreate() && !editing()}
                     onChange={(e) => {
                       setRepaymentType(e.target.value);
                       setLoanData();
@@ -451,8 +589,8 @@ function Home() {
                   </select>
                 </div>
               </div>
-              <Show when={isCreate()}>
-                <div class="mt-4 card-actions">
+              <div class="mt-4 card-actions">
+                <Show when={isCreate() || editing()}>
                   <button
                     id="calculateBtn"
                     onClick={() => {
@@ -479,26 +617,33 @@ function Home() {
                   >
                     计算还款计划
                   </button>
+                </Show>
+                <Show when={isCreate() || editing()}>
                   <Show when={loanData()}>
                     {(data) => {
                       return (
                         <button
                           class="btn btn-success"
                           onClick={() => {
+                            setEditFileName(fileName());
                             setModal({
                               visible: true,
                               title: "创建还款计划",
-                              content: `确定创建${fileName}？`,
                               loading: false,
                               onOk: () => {
+                                if (!editFileName()) {
+                                  return;
+                                }
                                 setModal((prev) => {
                                   return {
                                     ...prev,
                                     loading: true,
                                   };
                                 });
-                                uploadToOnedrive(data()).then(
-                                  () => {
+                                uploadToOnedrive(data(), {
+                                  file_name: editFileName(),
+                                }).then(
+                                  (res) => {
                                     setModal((prev) => {
                                       return {
                                         ...prev,
@@ -506,11 +651,14 @@ function Home() {
                                         visible: false,
                                       };
                                     });
-                                    navigate(
-                                      `/?${new URLSearchParams({
-                                        file_name: fileName,
+                                    setPrevLoanData();
+                                    setEditing(false);
+                                    setSearchParams(
+                                      {
+                                        file_id: res.id,
                                         folder_id: folderId(),
-                                      })}`,
+                                        file_name: editFileName(),
+                                      },
                                       { replace: true },
                                     );
                                   },
@@ -532,8 +680,36 @@ function Home() {
                       );
                     }}
                   </Show>
-                </div>
-              </Show>
+                </Show>
+                <Show when={(!isCreate() && loanData()) || editing()}>
+                  <button
+                    class="btn"
+                    onClick={() => {
+                      if (editing()) {
+                        setEditing(false);
+                        setLoanData(prevLoanData());
+                        setPrevLoanData();
+                      } else {
+                        setEditing(true);
+                        const data = loanData();
+                        if (data) {
+                          syncFormFromData({
+                            ...data,
+                            periods: data.periods - data.currentPeriod,
+                            principal: data.plan[data.currentPeriod].remaining,
+                            plan: [],
+                          });
+                        }
+                        setPrevLoanData(loanData());
+                        setLoanData();
+                      }
+                    }}
+                    classList={{ "btn-primary": !editing() }}
+                  >
+                    {!editing() ? "更改还款计划" : "取消更改"}
+                  </button>
+                </Show>
+              </div>
             </div>
           </div>
 
@@ -541,7 +717,7 @@ function Home() {
             id="resultSection"
             class="flex flex-col gap-y-2"
             classList={{
-              hidden: !loanData(),
+              hidden: !loanData() || loading(),
             }}
           >
             <div class="card shadow-sm bg-base-100">
@@ -595,7 +771,19 @@ function Home() {
         <Modal
           visible={modal().visible}
           title={modal().title}
-          content={modal().content}
+          content={
+            <fieldset class="fieldset">
+              <legend class="fieldset-legend">文件名</legend>
+              <Input
+                required
+                value={editFileName()}
+                onChange={(e) => {
+                  setEditFileName(e.target.value?.trim());
+                }}
+                placeholder="请输入"
+              />
+            </fieldset>
+          }
           loading={modal().loading}
           onOk={() => {
             modal().onOk();

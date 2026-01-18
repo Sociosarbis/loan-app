@@ -1,11 +1,11 @@
-import { createEffect, JSXElement, Show } from "solid-js";
+import { createEffect, createSignal, JSXElement, Show } from "solid-js";
 
 export function Modal(props: {
   visible?: boolean;
   onCancel?: () => void;
   onOk?: () => void;
   title: JSXElement;
-  content: JSXElement;
+  content?: JSXElement;
   loading?: boolean;
 }) {
   let modelRef: HTMLDialogElement | undefined;
@@ -25,7 +25,8 @@ export function Modal(props: {
       {/* 弹窗内容：阻止冒泡，避免点击内容时关闭 */}
       <div class="modal-box" onClick={(e) => e.stopPropagation()}>
         <h2 class="text-lg font-bold">{props.title}</h2>
-        <p class="py-4">{props.content}</p>
+        {/** fixme: 渲染mismatch的问题 */}
+        <p class="py-4">{props.visible ? props.content : null}</p>
         <div class="modal-action">
           <button onClick={props.onCancel} disabled={props.loading} class="btn">
             取消

@@ -162,35 +162,49 @@ export class Client {
     }
   }
 
-  async fetchFileMeta({
-    folder_id,
-    file_name,
-  }: {
-    folder_id: string;
-    file_name: string;
-  }) {
-    return this.fetch(
-      `${ONEDRIVE_CONFIG.apiUrl}/me/drive/items/${folder_id}:/${file_name}`,
-    );
+  async fetchFileMeta({ file_id }: { file_id: string }) {
+    return this.fetch(`${ONEDRIVE_CONFIG.apiUrl}/me/drive/items/${file_id}`);
   }
 
   async putFile({
     folder_id,
     file_name,
+    file_id,
     content,
   }: {
-    folder_id: string;
-    file_name: string;
+    folder_id?: string;
+    file_name?: string;
+    file_id?: string;
     content?: unknown;
   }) {
     return this.fetch(
-      `${ONEDRIVE_CONFIG.apiUrl}/me/drive/items/${folder_id}:/${file_name}:/content`,
+      file_id
+        ? `${ONEDRIVE_CONFIG.apiUrl}/me/drive/items/${file_id}/content`
+        : `${ONEDRIVE_CONFIG.apiUrl}/me/drive/items/${folder_id}:/${file_name}:/content`,
       {
         method: "PUT",
         body: JSON.stringify(content),
         headers: { "Content-Type": "application/json" },
       },
     );
+  }
+
+  async renameFile({
+    file_name,
+    file_id,
+  }: {
+    file_name: string;
+    file_id: string;
+  }) {
+    const res = await this.fetch(
+      `${ONEDRIVE_CONFIG.apiUrl}/me/drive/items/${file_id}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ name: file_name }),
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+    return res.ok;
   }
 
   async fetch(info: RequestInfo, init?: RequestInit): Promise<Response> {

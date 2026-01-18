@@ -145,6 +145,7 @@ function FileListPage() {
                           onClick={() => {
                             navigate(
                               `/?${new URLSearchParams({
+                                file_id: file.id,
                                 file_name: file.name,
                                 folder_id: fileStore.state.folderId ?? "",
                               }).toString()}`

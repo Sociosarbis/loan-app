@@ -1,4 +1,5 @@
 export type LoanData = {
+  prev_file_id?: string
   currentPeriod: number;
   principal: number;
   periods: number;
