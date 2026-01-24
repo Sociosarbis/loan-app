@@ -1,11 +1,10 @@
 import {
-  children,
   createEffect,
   createMemo,
+  createResource,
   createSignal,
   onCleanup,
   Show,
-  Suspense,
   useContext,
 } from "solid-js";
 import { History } from "~/components/History";
@@ -16,7 +15,7 @@ import { isString, pick, thru } from "lodash-es";
 import { Summary } from "~/components/Summary";
 import { Modal } from "~/components/Modal";
 import { AppContext } from "~/stores";
-import { createAsync, useNavigate, useSearchParams } from "@solidjs/router";
+import { useNavigate, useSearchParams } from "@solidjs/router";
 import dayjs from "dayjs";
 import { NeedLoggedIn } from "~/stores/user";
 import { Input } from "~/components/Input";
@@ -165,7 +164,6 @@ function SyncStatus(props: { loanData?: LoanData; loading?: boolean }) {
 function Home() {
   const { userStore, toastStore, oneDriveClient } = useContext(AppContext);
   const [searchParams, setSearchParams] = useSearchParams();
-  const [loading, setLoading] = createSignal(false);
   const [loanData, setLoanData] = createSignal<LoanData>();
   const [editing, setEditing] = createSignal<boolean>();
   const [prevLoanData, setPrevLoanData] = createSignal<LoanData>();
@@ -189,16 +187,18 @@ function Home() {
   const folderId = () => searchParams.folder_id?.toString() ?? "";
   const fileId = () => searchParams.file_id?.toString() ?? "";
   const prevFileId = createMemo(() => loanData()?.prev_file_id);
-  const prevFileMeta = createAsync(async () => {
-    const id = prevFileId();
-    return id
-      ? oneDriveClient.fetchFileMeta({ file_id: id }).then((res) => {
-          return res.ok
-            ? res.json().then((json) => pick(json, "id", "name"))
-            : undefined;
-        })
-      : undefined;
-  });
+  const [prevFileMetaResource] = createResource(
+    () => prevFileId(),
+    async (id) => {
+      return id
+        ? oneDriveClient.fetchFileMeta({ file_id: id }).then((res) => {
+            return res.ok
+              ? res.json().then((json) => pick(json, "id", "name"))
+              : undefined;
+          })
+        : undefined;
+    },
+  );
   const [modal, setModal] = createSignal({
     visible: false,
     title: "",
@@ -216,33 +216,37 @@ function Home() {
     toastStore.showMessage({ text, type: isError ? "error" : "info" });
   };
 
-  const downloadFromOnedrive = async () => {
-    try {
-      const metaRes = await oneDriveClient.fetchFileMeta({
-        file_id: fileId(),
-      });
-      if (!metaRes) return null;
+  const [fileResource] = createResource(
+    () => [fileId(), isCreate(), isLoggedIn()] as const,
+    async ([fileId, isCreate, isLoggedIn]) => {
+      if (isCreate || !isLoggedIn || !fileId) return;
+      try {
+        const metaRes = await oneDriveClient.fetchFileMeta({
+          file_id: fileId,
+        });
+        if (!metaRes) return null;
 
-      if (metaRes.status === 404) {
-        showMessage("云端无数据", true);
-        return null;
-      }
-      if (!metaRes.ok) {
-        showMessage("❌ 下载失败", true);
-        throw new Error("download failed");
-      }
+        if (metaRes.status === 404) {
+          showMessage("云端无数据", true);
+          return null;
+        }
+        if (!metaRes.ok) {
+          showMessage("❌ 下载失败", true);
+          throw new Error("download failed");
+        }
 
-      const meta = await metaRes.json();
-      const contentRes = await fetch(meta["@microsoft.graph.downloadUrl"]);
-      const text = await contentRes.text();
-      const data = JSON.parse(text);
-      return data;
-    } catch (err) {
-      console.error("下载错误:", err);
-      showMessage("❌ 下载异常", true);
-      throw err;
-    }
-  };
+        const meta = await metaRes.json();
+        const contentRes = await fetch(meta["@microsoft.graph.downloadUrl"]);
+        const text = await contentRes.text();
+        const data = JSON.parse(text);
+        return data;
+      } catch (err) {
+        console.error("下载错误:", err);
+        showMessage("❌ 下载异常", true);
+        throw err;
+      }
+    },
+  );
 
   let autoSyncTimer: number | undefined;
 
@@ -337,21 +341,14 @@ function Home() {
   };
 
   createEffect(async () => {
-    if (!isCreate() && fileId()) {
-      if (isLoggedIn()) {
-        // 优先从云端加载
-        setLoading(true);
-        try {
-          const cloudData = await downloadFromOnedrive();
-          if (cloudData) {
-            setLoanData(cloudData);
-            syncFormFromData(cloudData);
-            updateUI();
-          }
-        } catch (e) {
-          showMessage((e as Error).message, true);
-        }
-        setLoading(false);
+    if (fileResource.error) {
+      showMessage((fileResource.error as Error).message, true);
+    } else {
+      const cloudData = fileResource();
+      if (cloudData) {
+        setLoanData(cloudData);
+        syncFormFromData(cloudData);
+        updateUI();
       }
     }
   });
@@ -455,348 +452,349 @@ function Home() {
           </button>
         </Show>
       </div>
-      <div class="container mx-auto pt-8">
-        <div class="flex flex-col gap-y-4">
-          <Show when={!isCreate() && !editing()}>
-            <div id="syncSection" class="card shadow-sm bg-base-100">
-              <div class="card-body">
-                <h2 class="card-title">
-                  OneDrive 云端同步
-                  <input
-                    type="checkbox"
-                    checked={autoSync()}
-                    class="toggle"
-                    onChange={(e) => {
-                      setAutoSync(e.target.checked);
-                    }}
-                  ></input>
-                </h2>
-                <Show when={loanData()?.prev_file_id}>
-                  {(file_id) => {
-                    return (
-                      <div>
-                        <Suspense
-                          fallback={
-                            <button class="btn btn-sm btn-link" disabled>
-                              历史计划
-                              <span class="loading loading-sm loading-spinner mx-1"></span>
-                            </button>
-                          }
-                        >
-                          <div>
-                            <button
-                              class="btn btn-sm btn-link"
-                              disabled={!prevFileMeta()?.name}
-                              onClick={() => {
-                                setSearchParams(
-                                  {
-                                    file_id: file_id(),
-                                    file_name: prevFileMeta()?.name,
-                                  },
-                                  {
-                                    replace: false,
-                                  },
-                                );
-                              }}
-                            >
-                              历史计划
-                            </button>
-                          </div>
-                        </Suspense>
-                      </div>
-                    );
-                  }}
-                </Show>
-                <div id="syncStatus">
-                  <SyncStatus loanData={loanData()} loading={loading()} />
-                </div>
-              </div>
-            </div>
-          </Show>
-          <div id="inputSection" class="card shadow-sm bg-base-100">
-            <div class="card-body">
-              <h2 class="card-title">贷款信息</h2>
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label class="block text-gray-700 font-medium mb-2">
-                    本金 (元)
-                  </label>
-                  <input
-                    type="number"
-                    id="principal"
-                    disabled={!isCreate()}
-                    onChange={(e) => {
-                      setPrincipal(e.target.value);
-                      setLoanData();
-                    }}
-                    value={getPrincipal()}
-                    class="w-full input"
-                  />
-                </div>
-                <div>
-                  <label class="block text-gray-700 font-medium mb-2">
-                    期数 (月)
-                  </label>
-                  <input
-                    type="number"
-                    id="periods"
-                    disabled={!isCreate() && !editing()}
-                    value={getPeriods()}
-                    onChange={(e) => {
-                      setPeriods(e.target.value);
-                      setLoanData();
-                    }}
-                    class="w-full input"
-                  />
-                </div>
-                <div>
-                  <label class="block text-gray-700 font-medium mb-2">
-                    年利率 (%)
-                  </label>
-                  <input
-                    type="number"
-                    id="rate"
-                    step="0.01"
-                    disabled={!isCreate() && !editing()}
-                    value={getRate()}
-                    onChange={(e) => {
-                      setRate(e.target.value);
-                      setLoanData();
-                    }}
-                    class="w-full input"
-                  />
-                </div>
-                <div>
-                  <label class="block text-gray-700 font-medium mb-2">
-                    还款方式
-                  </label>
-                  <select
-                    id="repaymentType"
-                    class="w-full select"
-                    value={getRepaymentType()}
-                    disabled={!isCreate() && !editing()}
-                    onChange={(e) => {
-                      setRepaymentType(e.target.value);
-                      setLoanData();
-                    }}
-                  >
-                    <option value={RepaymentType.EQUAL_PRINCIPAL_INTEREST}>
-                      等额本息
-                    </option>
-                    <option value={RepaymentType.EQUAL_PRINCIPAL}>
-                      等额本金
-                    </option>
-                  </select>
-                </div>
-              </div>
-              <div class="mt-4 card-actions">
-                <Show when={isCreate() || editing()}>
-                  <button
-                    id="calculateBtn"
-                    onClick={() => {
-                      const principal = parseFloat(getPrincipal());
-                      const periods = parseInt(getPeriods());
-                      const rate = parseFloat(getRate());
-                      const repaymentType = getRepaymentType();
-
-                      const data = calculateRepaymentPlan(
-                        principal,
-                        periods,
-                        rate,
-                        repaymentType,
-                      );
-                      if (data) {
-                        data.lastModifiedAt = Date.now();
-                        data.lastSyncedAt = 0; // 尚未同步
-                        setLoanData(data);
-                      } else {
-                        alert("请填写完整且有效的贷款信息");
-                      }
-                    }}
-                    class="btn btn-primary"
-                  >
-                    计算还款计划
-                  </button>
-                </Show>
-                <Show when={isCreate() || editing()}>
-                  <Show when={loanData()}>
-                    {(data) => {
+      <div class="px-6">
+        <div class="container mx-auto pt-8">
+          <div class="flex flex-col gap-y-4">
+            <Show when={!isCreate() && !editing()}>
+              <div id="syncSection" class="card shadow-sm bg-base-100">
+                <div class="card-body">
+                  <h2 class="card-title">
+                    OneDrive 云端同步
+                    <input
+                      type="checkbox"
+                      checked={autoSync()}
+                      class="toggle"
+                      onChange={(e) => {
+                        setAutoSync(e.target.checked);
+                      }}
+                    ></input>
+                  </h2>
+                  <Show when={loanData()?.prev_file_id}>
+                    {(file_id) => {
                       return (
-                        <button
-                          class="btn btn-success"
-                          onClick={() => {
-                            setEditFileName(fileName());
-                            setModal({
-                              visible: true,
-                              title: "创建还款计划",
-                              loading: false,
-                              onOk: () => {
-                                if (!editFileName()) {
-                                  return;
-                                }
-                                setModal((prev) => {
-                                  return {
-                                    ...prev,
-                                    loading: true,
-                                  };
-                                });
-                                uploadToOnedrive(data(), {
-                                  file_name: editFileName(),
-                                }).then(
-                                  (res) => {
-                                    setModal((prev) => {
-                                      return {
-                                        ...prev,
-                                        loading: false,
-                                        visible: false,
-                                      };
-                                    });
-                                    setPrevLoanData();
-                                    setEditing(false);
-                                    setSearchParams(
-                                      {
-                                        file_id: res.id,
-                                        folder_id: folderId(),
-                                        file_name: editFileName(),
-                                      },
-                                      { replace: true },
-                                    );
-                                  },
-                                  () => {
-                                    setModal((prev) => {
-                                      return {
-                                        ...prev,
-                                        loading: false,
-                                      };
-                                    });
-                                  },
-                                );
-                              },
-                            });
-                          }}
-                        >
-                          保存计划
-                        </button>
+                        <div>
+                          <button
+                            class="btn btn-sm btn-link"
+                            disabled={
+                              prevFileMetaResource.loading ||
+                              !prevFileMetaResource()
+                            }
+                            onClick={() => {
+                              setSearchParams(
+                                {
+                                  file_id: file_id(),
+                                  file_name: prevFileMetaResource()?.name,
+                                },
+                                {
+                                  replace: false,
+                                },
+                              );
+                            }}
+                          >
+                            历史计划
+                            <Show when={prevFileMetaResource.loading}>
+                              <span class="loading loading-sm loading-spinner mx-1"></span>
+                            </Show>
+                          </button>
+                        </div>
                       );
                     }}
                   </Show>
-                </Show>
-                <Show when={(!isCreate() && loanData()) || editing()}>
-                  <button
-                    class="btn"
-                    onClick={() => {
-                      if (editing()) {
-                        setEditing(false);
-                        setLoanData(prevLoanData());
-                        setPrevLoanData();
-                      } else {
-                        setEditing(true);
-                        const data = loanData();
-                        if (data) {
-                          syncFormFromData({
-                            ...data,
-                            periods: data.periods - data.currentPeriod,
-                            principal: data.plan[data.currentPeriod].remaining,
-                            plan: [],
-                          });
-                        }
-                        setPrevLoanData(loanData());
-                        setLoanData();
-                      }
-                    }}
-                    classList={{ "btn-primary": !editing() }}
-                  >
-                    {!editing() ? "更改还款计划" : "取消更改"}
-                  </button>
-                </Show>
-              </div>
-            </div>
-          </div>
-
-          <div
-            id="resultSection"
-            class="flex flex-col gap-y-2"
-            classList={{
-              hidden: !loanData() || loading(),
-            }}
-          >
-            <div class="card shadow-sm bg-base-100">
-              <div class="card-body">
-                <div class="flex justify-between items-center mb-4">
-                  <h2 class="card-title">还款计划</h2>
-                  <div class="flex space-x-2">
-                    <button
-                      id="payBtn"
-                      disabled={thru(
-                        loanData(),
-                        (loanData) =>
-                          loanData &&
-                          loanData.currentPeriod >= loanData.plan.length,
-                      )}
-                      onClick={makePayment}
-                      class="btn btn-primary"
-                    >
-                      本期还款
-                    </button>
-                    <button
-                      id="undoBtn"
-                      disabled={thru(
-                        loanData(),
-                        (loanData) => !loanData?.paymentHistory.length,
-                      )}
-                      onClick={undoPayment}
-                      class="btn btn-warning"
-                    >
-                      撤销还款
-                    </button>
+                  <div id="syncStatus">
+                    <SyncStatus
+                      loanData={loanData()}
+                      loading={fileResource.loading}
+                    />
                   </div>
                 </div>
+              </div>
+            </Show>
+            <div id="inputSection" class="card shadow-sm bg-base-100">
+              <div class="card-body">
+                <h2 class="card-title">贷款信息</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label class="block text-gray-700 font-medium mb-2">
+                      本金 (元)
+                    </label>
+                    <input
+                      type="number"
+                      id="principal"
+                      disabled={!isCreate()}
+                      onChange={(e) => {
+                        setPrincipal(e.target.value);
+                        setLoanData();
+                      }}
+                      value={getPrincipal()}
+                      class="w-full input"
+                    />
+                  </div>
+                  <div>
+                    <label class="block text-gray-700 font-medium mb-2">
+                      期数 (月)
+                    </label>
+                    <input
+                      type="number"
+                      id="periods"
+                      disabled={!isCreate() && !editing()}
+                      value={getPeriods()}
+                      onChange={(e) => {
+                        setPeriods(e.target.value);
+                        setLoanData();
+                      }}
+                      class="w-full input"
+                    />
+                  </div>
+                  <div>
+                    <label class="block text-gray-700 font-medium mb-2">
+                      年利率 (%)
+                    </label>
+                    <input
+                      type="number"
+                      id="rate"
+                      step="0.01"
+                      disabled={!isCreate() && !editing()}
+                      value={getRate()}
+                      onChange={(e) => {
+                        setRate(e.target.value);
+                        setLoanData();
+                      }}
+                      class="w-full input"
+                    />
+                  </div>
+                  <div>
+                    <label class="block text-gray-700 font-medium mb-2">
+                      还款方式
+                    </label>
+                    <select
+                      id="repaymentType"
+                      class="w-full select"
+                      value={getRepaymentType()}
+                      disabled={!isCreate() && !editing()}
+                      onChange={(e) => {
+                        setRepaymentType(e.target.value);
+                        setLoanData();
+                      }}
+                    >
+                      <option value={RepaymentType.EQUAL_PRINCIPAL_INTEREST}>
+                        等额本息
+                      </option>
+                      <option value={RepaymentType.EQUAL_PRINCIPAL}>
+                        等额本金
+                      </option>
+                    </select>
+                  </div>
+                </div>
+                <div class="mt-4 card-actions">
+                  <Show when={isCreate() || editing()}>
+                    <button
+                      id="calculateBtn"
+                      onClick={() => {
+                        const principal = parseFloat(getPrincipal());
+                        const periods = parseInt(getPeriods());
+                        const rate = parseFloat(getRate());
+                        const repaymentType = getRepaymentType();
 
-                <Summary loanData={loanData()} />
-
-                <div class="max-h-80 overflow-y-auto">
-                  <PlanTable loanData={loanData()} />
+                        const data = calculateRepaymentPlan(
+                          principal,
+                          periods,
+                          rate,
+                          repaymentType,
+                        );
+                        if (data) {
+                          data.lastModifiedAt = Date.now();
+                          data.lastSyncedAt = 0; // 尚未同步
+                          setLoanData(data);
+                        } else {
+                          alert("请填写完整且有效的贷款信息");
+                        }
+                      }}
+                      class="btn btn-primary"
+                    >
+                      计算还款计划
+                    </button>
+                  </Show>
+                  <Show when={isCreate() || editing()}>
+                    <Show when={loanData()}>
+                      {(data) => {
+                        return (
+                          <button
+                            class="btn btn-success"
+                            onClick={() => {
+                              setEditFileName(fileName());
+                              setModal({
+                                visible: true,
+                                title: "创建还款计划",
+                                loading: false,
+                                onOk: () => {
+                                  if (!editFileName()) {
+                                    return;
+                                  }
+                                  setModal((prev) => {
+                                    return {
+                                      ...prev,
+                                      loading: true,
+                                    };
+                                  });
+                                  uploadToOnedrive(data(), {
+                                    file_name: editFileName(),
+                                  }).then(
+                                    (res) => {
+                                      setModal((prev) => {
+                                        return {
+                                          ...prev,
+                                          loading: false,
+                                          visible: false,
+                                        };
+                                      });
+                                      setPrevLoanData();
+                                      setEditing(false);
+                                      setSearchParams(
+                                        {
+                                          file_id: res.id,
+                                          folder_id: folderId(),
+                                          file_name: editFileName(),
+                                        },
+                                        { replace: true },
+                                      );
+                                    },
+                                    () => {
+                                      setModal((prev) => {
+                                        return {
+                                          ...prev,
+                                          loading: false,
+                                        };
+                                      });
+                                    },
+                                  );
+                                },
+                              });
+                            }}
+                          >
+                            保存计划
+                          </button>
+                        );
+                      }}
+                    </Show>
+                  </Show>
+                  <Show when={(!isCreate() && loanData()) || editing()}>
+                    <button
+                      class="btn"
+                      onClick={() => {
+                        if (editing()) {
+                          setEditing(false);
+                          setLoanData(prevLoanData());
+                          setPrevLoanData();
+                        } else {
+                          setEditing(true);
+                          const data = loanData();
+                          if (data) {
+                            syncFormFromData({
+                              ...data,
+                              periods: data.periods - data.currentPeriod,
+                              principal:
+                                data.plan[data.currentPeriod].remaining,
+                              plan: [],
+                            });
+                          }
+                          setPrevLoanData(loanData());
+                          setLoanData();
+                        }
+                      }}
+                      classList={{ "btn-primary": !editing() }}
+                    >
+                      {!editing() ? "更改还款计划" : "取消更改"}
+                    </button>
+                  </Show>
                 </div>
               </div>
             </div>
 
-            <div class="card shadow-sm bg-base-100">
-              <div class="card-body">
-                <h2 class="card-title">还款记录</h2>
-                <History loanData={loanData()} />
+            <div
+              id="resultSection"
+              class="flex flex-col gap-y-2"
+              classList={{
+                hidden: !loanData() || fileResource.loading,
+              }}
+            >
+              <div class="card shadow-sm bg-base-100">
+                <div class="card-body">
+                  <div class="flex justify-between items-center mb-4">
+                    <h2 class="card-title">还款计划</h2>
+                    <div class="flex space-x-2">
+                      <button
+                        id="payBtn"
+                        disabled={thru(
+                          loanData(),
+                          (loanData) =>
+                            loanData &&
+                            loanData.currentPeriod >= loanData.plan.length,
+                        )}
+                        onClick={makePayment}
+                        class="btn btn-primary"
+                      >
+                        本期还款
+                      </button>
+                      <button
+                        id="undoBtn"
+                        disabled={thru(
+                          loanData(),
+                          (loanData) => !loanData?.paymentHistory.length,
+                        )}
+                        onClick={undoPayment}
+                        class="btn btn-warning"
+                      >
+                        撤销还款
+                      </button>
+                    </div>
+                  </div>
+
+                  <Summary loanData={loanData()} />
+
+                  <div class="max-h-80 overflow-y-auto">
+                    <PlanTable loanData={loanData()} />
+                  </div>
+                </div>
+              </div>
+
+              <div class="card shadow-sm bg-base-100">
+                <div class="card-body">
+                  <h2 class="card-title">还款记录</h2>
+                  <History loanData={loanData()} />
+                </div>
               </div>
             </div>
           </div>
+          <Modal
+            visible={modal().visible}
+            title={modal().title}
+            content={
+              <fieldset class="fieldset">
+                <legend class="fieldset-legend">文件名</legend>
+                <Input
+                  required
+                  value={editFileName()}
+                  onChange={(e) => {
+                    setEditFileName(e.target.value?.trim());
+                  }}
+                  placeholder="请输入"
+                />
+              </fieldset>
+            }
+            loading={modal().loading}
+            onOk={() => {
+              modal().onOk();
+            }}
+            onCancel={() => {
+              setModal((prev) => {
+                return {
+                  ...prev,
+                  visible: false,
+                };
+              });
+            }}
+          />
         </div>
-        <Modal
-          visible={modal().visible}
-          title={modal().title}
-          content={
-            <fieldset class="fieldset">
-              <legend class="fieldset-legend">文件名</legend>
-              <Input
-                required
-                value={editFileName()}
-                onChange={(e) => {
-                  setEditFileName(e.target.value?.trim());
-                }}
-                placeholder="请输入"
-              />
-            </fieldset>
-          }
-          loading={modal().loading}
-          onOk={() => {
-            modal().onOk();
-          }}
-          onCancel={() => {
-            setModal((prev) => {
-              return {
-                ...prev,
-                visible: false,
-              };
-            });
-          }}
-        />
       </div>
     </>
   );
