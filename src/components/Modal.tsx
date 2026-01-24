@@ -25,8 +25,7 @@ export function Modal(props: {
       {/* 弹窗内容：阻止冒泡，避免点击内容时关闭 */}
       <div class="modal-box" onClick={(e) => e.stopPropagation()}>
         <h2 class="text-lg font-bold">{props.title}</h2>
-        {/** fixme: 渲染mismatch的问题 */}
-        <p class="py-4">{props.visible ? props.content : null}</p>
+        <div class="py-4">{props.content}</div>
         <div class="modal-action">
           <button onClick={props.onCancel} disabled={props.loading} class="btn">
             取消

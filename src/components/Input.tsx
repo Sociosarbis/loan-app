@@ -1,4 +1,4 @@
-import { createSignal } from "solid-js";
+import { createRenderEffect, createSignal } from "solid-js";
 
 export function Input(props: {
   value?: string;
@@ -12,10 +12,13 @@ export function Input(props: {
   ) => void;
 }) {
   const [value, setValue] = createSignal(props.value);
+  createRenderEffect(() => {
+    setValue(props.value)
+  })
   return (
     <input
       type="text"
-      value={props.value}
+      value={value()}
       class="input"
       classList={{
         "input-error": props.required && !value(),
