@@ -348,7 +348,6 @@ function Home() {
       if (cloudData) {
         setLoanData(cloudData);
         syncFormFromData(cloudData);
-        updateUI();
       }
     }
   });
