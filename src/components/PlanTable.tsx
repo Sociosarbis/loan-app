@@ -21,7 +21,7 @@ export function PlanTable(props: { loanData?: LoanData }) {
               <For each={loanData().plan}>
                 {(item, idx) => {
                   const status =
-                    idx() < loanData().currentPeriod ? "已还" : "待还";
+                    () => idx() < loanData().currentPeriod ? "已还" : "待还";
                   return (
                     <tr
                       classList={{
@@ -34,7 +34,7 @@ export function PlanTable(props: { loanData?: LoanData }) {
                       <td class="py-2 px-4">¥{formatMoney(item.principal)}</td>
                       <td class="py-2 px-4">¥{formatMoney(item.interest)}</td>
                       <td class="py-2 px-4">¥{formatMoney(item.remaining)}</td>
-                      <td class="py-2 px-4">{status}</td>
+                      <td class="py-2 px-4">{status()}</td>
                     </tr>
                   );
                 }}
